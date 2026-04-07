@@ -300,7 +300,7 @@ class HTLWienXFabricationExport(pcbnew.ActionPlugin):
         with open(nc_file, 'w', encoding="latin_1") as nc:
             line_counter = 1
             for line in nc_content_without_line_numbers:
-                nc.write(f'N{line_counter:04.0f} {line}\n')
+                nc.write(f'N{line_counter:04.0f} {line}\n'.replace('Y-', 'Y'))
                 line_counter += 1
 
         os.remove(drl_file)
