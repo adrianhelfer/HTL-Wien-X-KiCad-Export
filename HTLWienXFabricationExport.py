@@ -145,14 +145,14 @@ class HTLWienXFabricationExport(pcbnew.ActionPlugin):
             # Sort by diameter (2nd element of tuple)
             tool_diameters.sort(key=lambda x: x[1])
 
-            # Write coordinates to EXC file with absolute Y-coordinates
+            # Write coordinates to EXC file with absolute coordinates
             with open(exc_file, 'w') as exc:
                 while True:
                     line = drl.readline()
                     if not line:
                         break
                     if 'G' not in line:
-                        exc.write(line.replace('Y-', 'Y'))
+                        exc.write(line.replace('Y-', 'Y').replace('X-', 'X'))
         
         # Write tool info to tool file
         with open(tool_file, 'w') as tool:
@@ -300,7 +300,7 @@ class HTLWienXFabricationExport(pcbnew.ActionPlugin):
         with open(nc_file, 'w', encoding="latin_1") as nc:
             line_counter = 1
             for line in nc_content_without_line_numbers:
-                nc.write(f'N{line_counter:04.0f} {line}\n'.replace('Y-', 'Y'))
+                nc.write(f'N{line_counter:04.0f} {line}\n'.replace('Y-', 'Y').replace('X-', 'X'))
                 line_counter += 1
 
         os.remove(drl_file)
