@@ -288,12 +288,15 @@ class HTLWienXFabricationExport(pcbnew.ActionPlugin):
                     spin_up(nc_koordinate[0], nc_koordinate[1], diameter)
                     first_inner_loop = False
                     continue
-                if nc_koordinate[0] != prev_x:
-                    nc_content_without_line_numbers.append(f'X{nc_koordinate[0]}')
-                    prev_x = nc_koordinate[0]
-                if nc_koordinate[1] != prev_y:
-                    nc_content_without_line_numbers.append(f'Y{nc_koordinate[1]}')
-                    prev_y = nc_koordinate[1]
+                if nc_koordinate[0] != prev_x or nc_koordinate[1] != prev_y:
+                    line = ''
+                    if nc_koordinate[0] != prev_x:
+                        line += f'X{nc_koordinate[0]}'
+                        prev_x = nc_koordinate[0]
+                    if nc_koordinate[1] != prev_y:
+                        line += f' Y{nc_koordinate[1]}'
+                        prev_y = nc_koordinate[1]
+                    nc_content_without_line_numbers.append(line.strip())
             nc_content_without_line_numbers.append('G80')
         nc_content_without_line_numbers.append('M30')
 
