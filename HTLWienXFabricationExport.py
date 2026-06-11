@@ -9,50 +9,76 @@ def find_kicad_cli():
     Locates the kicad-cli executable in an OS-agnostic way.
 
     Returns:
-        str: The absolute path to the kicad-cli executable, or None if not found.
+        str: The absolute path to the kicad-cli executable.
+
+    Raises:
+        FileNotFoundError: If kicad-cli cannot be located anywhere.
     """
-    # --- Check if kicad-cli is in the system's PATH ---
+    # --- Strategy 1: derive path from the running KiCad/pcbnew executable ---
+    # pcbnew.__file__ is something like .../KiCad/10.0/bin/Lib/pcbnew.py
+    # or .../KiCad/10.0/bin/scripting/pcbnew.py  — walk up until we find the
+    # bin directory that contains kicad-cli(.exe).
+    cli_executable_name = "kicad-cli.exe" if sys.platform == "win32" else "kicad-cli"
+    try:
+        candidate_dir = os.path.dirname(os.path.abspath(pcbnew.__file__))
+        for _ in range(6):  # walk up at most 6 levels
+            candidate = os.path.join(candidate_dir, cli_executable_name)
+            if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                return candidate
+            candidate_dir = os.path.dirname(candidate_dir)
+    except Exception:
+        pass
+
+    # --- Strategy 2: check if kicad-cli is in the system's PATH ---
     kicad_cli_path = shutil.which("kicad-cli")
     if kicad_cli_path:
         return kicad_cli_path
 
-    # --- If not in PATH, check default installation locations ---
-    
-    # Determine the executable name based on the OS
-    cli_executable_name = "kicad-cli.exe" if sys.platform == "win32" else "kicad-cli"
-
-    # Define platform-specific search paths
+    # --- Strategy 3: check known default installation locations ---
     search_paths = []
     if sys.platform == "darwin":  # macOS
         search_paths.append('/usr/local/bin/kicad-cli')
         search_paths.append(f"/Applications/KiCad.app/Contents/MacOS/{cli_executable_name}")
-        # Check for versioned app names, e.g., KiCad-7.0.app
-        for item in os.listdir("/Applications"):
-             if item.lower().startswith("kicad") and item.endswith(".app"):
-                  search_paths.append(f"/Applications/{item}/Contents/MacOS/{cli_executable_name}")
+        try:
+            for item in os.listdir("/Applications"):
+                if item.lower().startswith("kicad") and item.endswith(".app"):
+                    search_paths.append(f"/Applications/{item}/Contents/MacOS/{cli_executable_name}")
+        except OSError:
+            pass
 
     elif sys.platform == "win32":  # Windows
+        # KiCad 10+ installs to %LOCALAPPDATA%\Programs\KiCad\<ver>\bin
+        local_app_data = os.environ.get("LOCALAPPDATA", "")
+        # Also check %ProgramFiles% for older / system-wide installs
         program_files = os.environ.get("ProgramFiles", "C:\\Program Files")
-        # Check for KiCad directory, which often contains a versioned subfolder
-        kicad_base_dir = os.path.join(program_files, "KiCad")
-        if os.path.isdir(kicad_base_dir):
-            # Look inside version subdirectories (e.g., "8.0", "7.0")
-            for version_dir in os.listdir(kicad_base_dir):
-                potential_path = os.path.join(kicad_base_dir, version_dir, "bin", cli_executable_name)
-                search_paths.append(potential_path)
 
-    elif sys.platform.startswith("linux"): # Linux
-        # Most package manager installs will be in the PATH.
-        # This is a fallback for non-standard or manual installations.
+        for base in [local_app_data, program_files]:
+            kicad_base_dir = os.path.join(base, "Programs", "KiCad")
+            if not os.path.isdir(kicad_base_dir):
+                kicad_base_dir = os.path.join(base, "KiCad")
+            if os.path.isdir(kicad_base_dir):
+                try:
+                    for version_dir in sorted(os.listdir(kicad_base_dir), reverse=True):
+                        search_paths.append(
+                            os.path.join(kicad_base_dir, version_dir, "bin", cli_executable_name)
+                        )
+                except OSError:
+                    pass
+
+    elif sys.platform.startswith("linux"):  # Linux
         search_paths.append(f"/usr/bin/{cli_executable_name}")
         search_paths.append(f"/usr/local/bin/{cli_executable_name}")
+        search_paths.append(f"/usr/lib/kicad/bin/{cli_executable_name}")
 
-    # Check the potential paths for an existing, executable file
     for path in search_paths:
         if os.path.isfile(path) and os.access(path, os.X_OK):
             return path
-            
-    return None
+
+    raise FileNotFoundError(
+        "kicad-cli wurde nicht gefunden.\n"
+        "Bitte stellen Sie sicher, dass KiCad korrekt installiert ist.\n"
+        f"Gesuchte Pfade:\n" + "\n".join(search_paths)
+    )
 
 class HTLWienXFabricationExport(pcbnew.ActionPlugin):
     def defaults(self):
@@ -63,7 +89,14 @@ class HTLWienXFabricationExport(pcbnew.ActionPlugin):
         self.icon_file_name = os.path.join(os.path.dirname(__file__), 'HTLWienX_24x24.png')
 
     def Run(self):
-        kicad_cli_path = str(find_kicad_cli())
+        try:
+            self._run()
+        except Exception as e:
+            import traceback
+            pcbnew.DisplayError(None, f"Fehler beim Exportieren:\n\n{e}\n\n{traceback.format_exc()}")
+
+    def _run(self):
+        kicad_cli_path = find_kicad_cli()   # raises FileNotFoundError with a clear message if missing
         board = pcbnew.GetBoard()
         board_path = board.GetFileName()
         board_directory = os.path.dirname(board_path)
@@ -122,8 +155,6 @@ class HTLWienXFabricationExport(pcbnew.ActionPlugin):
         tool_file = os.path.join(fabrication_directory, os.path.splitext(os.path.basename(board_path))[0] + '-Bohrer.txt')
 
         nc_file = os.path.join(fabrication_directory, os.path.splitext(os.path.basename(board_path))[0] + '.NC')
-        # Make nc_file content ansi compatible
-        nc_file = nc_file.encode('ascii', 'ignore').decode('ascii')
 
         tool_diameters = []
         with open(drl_file, 'r') as drl:
@@ -199,7 +230,7 @@ class HTLWienXFabricationExport(pcbnew.ActionPlugin):
             nc_content_without_line_numbers.append(f"{werkzeugnummer} M09 (Bohrer ø{durchmesser})")
             nc_content_without_line_numbers.append("M06")
 
-        def nc_koordinate(exc_koordinate):
+        def exc_to_nc_coord(exc_koordinate):
             ret = (exc_koordinate * 25.4) / 10000
             return f'{ret:0.3f}'
 
@@ -259,8 +290,8 @@ class HTLWienXFabricationExport(pcbnew.ActionPlugin):
             if tool_id not in exc_drill_infos:
                 continue
             for exc_koordinate in exc_drill_infos[tool_id]:
-                nc_x = nc_koordinate(float(exc_koordinate[0]))
-                nc_y = nc_koordinate(float(exc_koordinate[1]))
+                nc_x = exc_to_nc_coord(float(exc_koordinate[0]))
+                nc_y = exc_to_nc_coord(float(exc_koordinate[1]))
                 nc_drill_infos[tool_id].append((nc_x, nc_y))
 
 
